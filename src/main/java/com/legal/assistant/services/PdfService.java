@@ -24,14 +24,34 @@ public class PdfService {
 
     public List<DocumentChunk> chunk(String text) {
         List<DocumentChunk> chunks = new ArrayList<>();
-        String[] paragraphs = text.split("\\n\\n+");
+        String[] lines = text.split("\\r?\\n");
+        
+        StringBuilder current = new StringBuilder();
         int index = 0;
-        for (String para : paragraphs) {
-            String trimmed = para.strip();
-            if (trimmed.length() > 50) {
-                chunks.add(new DocumentChunk(index++, trimmed));
+
+        for (String line : lines) {
+            String trimmed = line.strip();
+            if (trimmed.isEmpty()) {
+                // flush current chunk if big enough
+                if (current.length() > 50) {
+                    chunks.add(new DocumentChunk(index++, current.toString().strip()));
+                    current = new StringBuilder();
+                }
+            } else {
+                current.append(trimmed).append(" ");
+                // flush if chunk is getting long enough
+                if (current.length() > 300) {
+                    chunks.add(new DocumentChunk(index++, current.toString().strip()));
+                    current = new StringBuilder();
+                }
             }
         }
+
+        // flush remaining content
+        if (current.length() > 50) {
+            chunks.add(new DocumentChunk(index++, current.toString().strip()));
+        }
+
         return chunks;
     }
 }
