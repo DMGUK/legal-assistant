@@ -2,6 +2,7 @@ package com.legal.assistant.controllers;
 
 import com.legal.assistant.models.DocumentChunk;
 import com.legal.assistant.models.DocumentRecord;
+import com.legal.assistant.services.EmbeddingService;
 import com.legal.assistant.services.PdfService;
 import com.legal.assistant.store.DocumentStore;
 import org.springframework.http.ResponseEntity;
@@ -18,24 +19,30 @@ public class DocumentController {
 
     private final PdfService pdfService;
     private final DocumentStore documentStore;
+    private final EmbeddingService embeddingService;
 
-    public DocumentController(PdfService pdfService, DocumentStore documentStore) {
+    public DocumentController(PdfService pdfService, DocumentStore documentStore, EmbeddingService embeddingService) {
         this.pdfService    = pdfService;
         this.documentStore = documentStore;
+        this.embeddingService = embeddingService;
     }
 
     @PostMapping
     public ResponseEntity<?> upload(@RequestParam("file") MultipartFile file) {
         try {
-            String text = pdfService.extractText(file);
-            List<DocumentChunk> chunks = pdfService.chunk(text);
+            String text                  = pdfService.extractText(file);
+            List<DocumentChunk> chunks   = pdfService.chunk(text);
+            embeddingService.embedChunks(chunks);
+
             String id = UUID.randomUUID().toString();
-            documentStore.save(new DocumentRecord(id, file.getOriginalFilename(), chunks));
+            documentStore.save(new DocumentRecord(id,
+                    file.getOriginalFilename(), chunks));
 
             return ResponseEntity.ok(Map.of(
                 "document_id", id,
                 "filename",    file.getOriginalFilename(),
-                "chunks",      chunks.size()
+                "chunks",      chunks.size(),
+                "embedded",    embeddingService.isAvailable()
             ));
         } catch (Exception e) {
             return ResponseEntity.internalServerError()
