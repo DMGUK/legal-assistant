@@ -39,3 +39,6 @@ build/
 .claude/
 CLAUDE.md
 REFERENCES.md
+
+### Runtime data ###
+data/
