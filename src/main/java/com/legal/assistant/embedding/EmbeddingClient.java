@@ -42,14 +42,25 @@ public class EmbeddingClient {
                 .build();
 
         try (Response response = http.newCall(request).execute()) {
-            String responseBody = response.body() != null
-                    ? response.body().string() : "";
+            ResponseBody rawBody = response.body();
+            String responseBody = rawBody != null ? rawBody.string() : "";
             if (!response.isSuccessful()) {
                 throw new IOException("OpenAI error " + response.code()
                         + ": " + responseBody);
             }
             JsonNode root = mapper.readTree(responseBody);
-            JsonNode embedding = root.path("data").get(0).path("embedding");
+            JsonNode data = root.path("data");
+            if (!data.isArray() || data.isEmpty()) {
+                throw new IOException(
+                    "Unexpected response from OpenAI: 'data' array is absent or empty. Body: "
+                    + responseBody);
+            }
+            JsonNode embedding = data.get(0).path("embedding");
+            if (!embedding.isArray() || embedding.isEmpty()) {
+                throw new IOException(
+                    "Unexpected embedding format in OpenAI response: 'embedding' field missing. Body: "
+                    + responseBody);
+            }
 
             float[] vector = new float[embedding.size()];
             for (int i = 0; i < embedding.size(); i++) {
@@ -77,18 +88,28 @@ public class EmbeddingClient {
                 .build();
 
         try (Response response = http.newCall(request).execute()) {
-            String responseBody = response.body() != null
-                    ? response.body().string() : "";
+            ResponseBody rawBody = response.body();
+            String responseBody = rawBody != null ? rawBody.string() : "";
             if (!response.isSuccessful()) {
                 throw new IOException("OpenAI error " + response.code()
                         + ": " + responseBody);
             }
             JsonNode root = mapper.readTree(responseBody);
             JsonNode data = root.path("data");
+            if (!data.isArray()) {
+                throw new IOException(
+                    "Unexpected response from OpenAI: 'data' field is not an array. Body: "
+                    + responseBody);
+            }
 
             List<float[]> vectors = new ArrayList<>();
             for (JsonNode item : data) {
                 JsonNode embedding = item.path("embedding");
+                if (!embedding.isArray() || embedding.isEmpty()) {
+                    throw new IOException(
+                        "Missing or empty 'embedding' for item at index " + vectors.size()
+                        + " in batch response");
+                }
                 float[] vector = new float[embedding.size()];
                 for (int i = 0; i < embedding.size(); i++) {
                     vector[i] = (float) embedding.get(i).asDouble();
