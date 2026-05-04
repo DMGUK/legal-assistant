@@ -5,9 +5,11 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import okhttp3.*;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 import java.io.IOException;
+import java.util.concurrent.TimeUnit;
 
 @Component
 public class ClaudeClient {
@@ -21,9 +23,13 @@ public class ClaudeClient {
     private final ObjectMapper mapper;
     private final String apiKey;
 
-    public ClaudeClient() {
-        this.apiKey = System.getenv("ANTHROPIC_API_KEY");
-        this.http   = new OkHttpClient();
+    public ClaudeClient(@Value("${ANTHROPIC_API_KEY}") String apiKey) {
+        this.apiKey = apiKey;
+        this.http   = new OkHttpClient.Builder()
+                .connectTimeout(10, TimeUnit.SECONDS)
+                .readTimeout(60, TimeUnit.SECONDS)
+                .writeTimeout(30, TimeUnit.SECONDS)
+                .build();
         this.mapper = new ObjectMapper();
     }
 
@@ -52,8 +58,8 @@ public class ClaudeClient {
                 .build();
 
         try (Response response = http.newCall(request).execute()) {
-            String responseBody = response.body() != null
-                    ? response.body().string() : "";
+            ResponseBody rawBody = response.body();
+            String responseBody = rawBody != null ? rawBody.string() : "";
             if (!response.isSuccessful()) {
                 throw new IOException("Claude API error " + response.code()
                         + ": " + responseBody);
@@ -61,10 +67,12 @@ public class ClaudeClient {
             JsonNode root = mapper.readTree(responseBody);
             for (JsonNode block : root.path("content")) {
                 if ("text".equals(block.path("type").asText())) {
-                    return block.path("text").asText();
+                    String text = block.path("text").asText();
+                    if (!text.isEmpty()) return text;
                 }
             }
-            throw new IOException("No text block in response: " + root);
+            String stopReason = root.path("stop_reason").asText("unknown");
+            throw new IOException("Claude returned no text content. stop_reason=" + stopReason);
         }
     }
 }

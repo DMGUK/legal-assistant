@@ -4,6 +4,9 @@ import ai.djl.huggingface.tokenizers.Encoding;
 import ai.djl.huggingface.tokenizers.HuggingFaceTokenizer;
 import ai.onnxruntime.*;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -14,6 +17,8 @@ import java.util.HashMap;
 import java.util.Map;
 
 public class DJLEmbeddingClient implements AutoCloseable {
+
+    private static final Logger log = LoggerFactory.getLogger(DJLEmbeddingClient.class);
 
     private static final String MODEL_URL =
         "https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2" +
@@ -32,7 +37,7 @@ public class DJLEmbeddingClient implements AutoCloseable {
     private final HuggingFaceTokenizer tokenizer;
 
     public DJLEmbeddingClient() throws Exception {
-        System.out.println("Loading local embedding model...");
+        log.info("Loading local embedding model...");
         Files.createDirectories(CACHE_DIR);
 
         downloadIfMissing(MODEL_PATH, MODEL_URL, "model (~90MB)");
@@ -45,28 +50,38 @@ public class DJLEmbeddingClient implements AutoCloseable {
                        "padding",   "true",
                        "truncation","true"));
 
-        System.out.println("Local embedding model ready.");
+        log.info("Local embedding model ready.");
     }
 
     private void downloadIfMissing(Path path, String url, String name) throws Exception {
-        if (!Files.exists(path)) {
-            System.out.println("Downloading " + name + " (one time only)...");
-            HttpClient client = HttpClient.newBuilder()
-                    .followRedirects(HttpClient.Redirect.ALWAYS)
-                    .build();
-            HttpRequest request = HttpRequest.newBuilder()
-                    .uri(URI.create(url))
-                    .header("User-Agent", "Java-HttpClient")
-                    .build();
-            HttpResponse<Path> response = client.send(request,
-                    HttpResponse.BodyHandlers.ofFile(path));
-            if (response.statusCode() != 200) {
-                Files.deleteIfExists(path);
-                throw new Exception("Failed to download " + name
-                        + ": HTTP " + response.statusCode());
-            }
-            System.out.println(name + " downloaded.");
+        if (Files.exists(path)) return;
+
+        // Download to a sibling temp file so that concurrent JVM instances or threads
+        // that both observe the file as absent don't corrupt each other's writes.
+        // The final Files.move with ATOMIC_MOVE ensures only one complete file ever lands
+        // at `path`, regardless of how many concurrent downloads race to finish.
+        Path tmp = path.resolveSibling(path.getFileName() + ".tmp");
+        log.info("Downloading {} (one time only)...", name);
+        HttpClient client = HttpClient.newBuilder()
+                .followRedirects(HttpClient.Redirect.ALWAYS)
+                .build();
+        HttpRequest request = HttpRequest.newBuilder()
+                .uri(URI.create(url))
+                .header("User-Agent", "Java-HttpClient")
+                .build();
+        HttpResponse<Path> response = client.send(request,
+                HttpResponse.BodyHandlers.ofFile(tmp));
+        if (response.statusCode() != 200) {
+            Files.deleteIfExists(tmp);
+            throw new Exception("Failed to download " + name
+                    + ": HTTP " + response.statusCode());
         }
+        // ATOMIC_MOVE: if two threads both finish, one wins cleanly; the other's REPLACE_EXISTING
+        // overwrites with an identical complete file rather than leaving a partial one.
+        Files.move(tmp, path,
+                StandardCopyOption.ATOMIC_MOVE,
+                StandardCopyOption.REPLACE_EXISTING);
+        log.info("{} downloaded.", name);
     }
 
     public float[] embed(String text) throws Exception {
